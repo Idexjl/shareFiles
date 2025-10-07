@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Tesseract;
 
 namespace ImageOCR
@@ -104,22 +106,62 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from an image file and saves it
+        /// Extracts HOCR layout information from multiple image pages in XHTML format
         /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <param name="hocrOutputPath">Path where the HOCR file will be saved</param>
-        public void ExtractAndSaveHocr(string imagePath, string hocrOutputPath)
+        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
+        /// <param name="hocrOutputPath">Path where the HOCR XHTML file will be saved</param>
+        public void ExtractAndSaveHocrXhtml(string[] imagePaths, string hocrOutputPath)
         {
-            string hocr = ExtractHocr(imagePath);
+            string hocr = ExtractHocrXhtml(imagePaths);
             File.WriteAllText(hocrOutputPath, hocr);
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from an image file
+        /// Extracts HOCR layout information from multiple image pages in XHTML format
+        /// </summary>
+        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
+        /// <returns>Complete HOCR XHTML document containing all pages</returns>
+        public string ExtractHocrXhtml(string[] imagePaths)
+        {
+            var pageHocrList = new List<string>();
+            
+            for (int i = 0; i < imagePaths.Length; i++)
+            {
+                if (!File.Exists(imagePaths[i]))
+                {
+                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
+                }
+
+                using (var img = Pix.LoadFromFile(imagePaths[i]))
+                {
+                    using (var page = _engine.Process(img))
+                    {
+                        string pageHocr = page.GetHOCRText(i);
+                        pageHocrList.Add(pageHocr);
+                    }
+                }
+            }
+
+            return CombineHocrPagesToXhtml(pageHocrList);
+        }
+
+        /// <summary>
+        /// Extracts HOCR layout information from a single image file and saves it as XHTML
         /// </summary>
         /// <param name="imagePath">Path to the image file</param>
-        /// <returns>HOCR HTML string containing layout information</returns>
-        public string ExtractHocr(string imagePath)
+        /// <param name="hocrOutputPath">Path where the HOCR XHTML file will be saved</param>
+        public void ExtractAndSaveHocrXhtml(string imagePath, string hocrOutputPath)
+        {
+            string hocr = ExtractHocrXhtml(imagePath);
+            File.WriteAllText(hocrOutputPath, hocr);
+        }
+
+        /// <summary>
+        /// Extracts HOCR layout information from a single image file in XHTML format
+        /// </summary>
+        /// <param name="imagePath">Path to the image file</param>
+        /// <returns>HOCR XHTML string containing layout information</returns>
+        public string ExtractHocrXhtml(string imagePath)
         {
             if (!File.Exists(imagePath))
             {
@@ -130,88 +172,166 @@ namespace ImageOCR
             {
                 using (var page = _engine.Process(img))
                 {
-                    return page.GetHOCRText(0);
+                    string pageHocr = page.GetHOCRText(0);
+                    return CombineHocrPagesToXhtml(new List<string> { pageHocr });
                 }
             }
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from an image stream
+        /// Extracts HOCR layout information from multiple image streams in XHTML format
         /// </summary>
-        /// <param name="imageStream">Stream containing the image data</param>
-        /// <returns>HOCR HTML string containing layout information</returns>
-        public string ExtractHocrFromStream(Stream imageStream)
+        /// <param name="imageStreams">Array of streams containing image data (one per page)</param>
+        /// <returns>Complete HOCR XHTML document containing all pages</returns>
+        public string ExtractHocrXhtmlFromStreams(Stream[] imageStreams)
         {
-            using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStream)))
+            var pageHocrList = new List<string>();
+            
+            for (int i = 0; i < imageStreams.Length; i++)
             {
-                using (var page = _engine.Process(img))
+                using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStreams[i])))
                 {
-                    return page.GetHOCRText(0);
+                    using (var page = _engine.Process(img))
+                    {
+                        string pageHocr = page.GetHOCRText(i);
+                        pageHocrList.Add(pageHocr);
+                    }
                 }
             }
+
+            return CombineHocrPagesToXhtml(pageHocrList);
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from a byte array
+        /// Extracts HOCR layout information from multiple byte arrays in XHTML format
         /// </summary>
-        /// <param name="imageBytes">Byte array of the image</param>
-        /// <returns>HOCR HTML string containing layout information</returns>
-        public string ExtractHocrFromBytes(byte[] imageBytes)
+        /// <param name="imageByteArrays">Array of byte arrays, each containing image data (one per page)</param>
+        /// <returns>Complete HOCR XHTML document containing all pages</returns>
+        public string ExtractHocrXhtmlFromBytes(byte[][] imageByteArrays)
         {
-            using (var img = Pix.LoadFromMemory(imageBytes))
+            var pageHocrList = new List<string>();
+            
+            for (int i = 0; i < imageByteArrays.Length; i++)
             {
-                using (var page = _engine.Process(img))
+                using (var img = Pix.LoadFromMemory(imageByteArrays[i]))
                 {
-                    return page.GetHOCRText(0);
+                    using (var page = _engine.Process(img))
+                    {
+                        string pageHocr = page.GetHOCRText(i);
+                        pageHocrList.Add(pageHocr);
+                    }
                 }
             }
+
+            return CombineHocrPagesToXhtml(pageHocrList);
         }
 
         /// <summary>
-        /// Extracts both text and HOCR layout information from an image
+        /// Extracts both text and HOCR XHTML layout information from multiple images
         /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Tuple containing the plain text and HOCR HTML</returns>
-        public (string Text, string Hocr) ExtractTextAndHocr(string imagePath)
+        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
+        /// <returns>Tuple containing the combined plain text and HOCR XHTML</returns>
+        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(string[] imagePaths)
         {
-            if (!File.Exists(imagePath))
+            var textList = new List<string>();
+            var pageHocrList = new List<string>();
+            
+            for (int i = 0; i < imagePaths.Length; i++)
             {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
-            using (var img = Pix.LoadFromFile(imagePath))
-            {
-                using (var page = _engine.Process(img))
+                if (!File.Exists(imagePaths[i]))
                 {
-                    string text = page.GetText();
-                    string hocr = page.GetHOCRText(0);
-                    return (text, hocr);
+                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
+                }
+
+                using (var img = Pix.LoadFromFile(imagePaths[i]))
+                {
+                    using (var page = _engine.Process(img))
+                    {
+                        textList.Add(page.GetText());
+                        pageHocrList.Add(page.GetHOCRText(i));
+                    }
                 }
             }
+
+            string combinedText = string.Join("\n\n", textList);
+            string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
+            
+            return (combinedText, hocrXhtml);
         }
 
         /// <summary>
-        /// Extracts text, HOCR, and confidence from an image
+        /// Extracts text, HOCR XHTML, and confidence from multiple images
         /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Tuple containing text, HOCR HTML, and confidence score</returns>
-        public (string Text, string Hocr, float Confidence) ExtractComplete(string imagePath)
+        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
+        /// <returns>Tuple containing combined text, HOCR XHTML, and average confidence score</returns>
+        public (string Text, string HocrXhtml, float AverageConfidence) ExtractCompleteXhtml(string[] imagePaths)
         {
-            if (!File.Exists(imagePath))
+            var textList = new List<string>();
+            var pageHocrList = new List<string>();
+            var confidenceList = new List<float>();
+            
+            for (int i = 0; i < imagePaths.Length; i++)
             {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
-            using (var img = Pix.LoadFromFile(imagePath))
-            {
-                using (var page = _engine.Process(img))
+                if (!File.Exists(imagePaths[i]))
                 {
-                    string text = page.GetText();
-                    string hocr = page.GetHOCRText(0);
-                    float confidence = page.GetMeanConfidence() * 100;
-                    return (text, hocr, confidence);
+                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
+                }
+
+                using (var img = Pix.LoadFromFile(imagePaths[i]))
+                {
+                    using (var page = _engine.Process(img))
+                    {
+                        textList.Add(page.GetText());
+                        pageHocrList.Add(page.GetHOCRText(i));
+                        confidenceList.Add(page.GetMeanConfidence() * 100);
+                    }
                 }
             }
+
+            string combinedText = string.Join("\n\n", textList);
+            string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
+            float avgConfidence = confidenceList.Average();
+            
+            return (combinedText, hocrXhtml, avgConfidence);
+        }
+
+        /// <summary>
+        /// Combines multiple HOCR page fragments into a complete XHTML document
+        /// </summary>
+        private string CombineHocrPagesToXhtml(List<string> pageHocrFragments)
+        {
+            var xhtmlHeader = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<!DOCTYPE html PUBLIC ""-//W3C//DTD XHTML 1.0 Transitional//EN"" ""http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"">
+<html xmlns=""http://www.w3.org/1999/xhtml"" xml:lang=""en"" lang=""en"">
+<head>
+<title>OCR Results</title>
+<meta http-equiv=""content-type"" content=""text/html; charset=utf-8"" />
+<meta name=""ocr-system"" content=""tesseract"" />
+<meta name=""ocr-capabilities"" content=""ocr_page ocr_carea ocr_par ocr_line ocrx_word"" />
+</head>
+<body>";
+
+            var xhtmlFooter = @"
+</body>
+</html>";
+
+            var bodyContent = new System.Text.StringBuilder();
+            
+            foreach (var pageHocr in pageHocrFragments)
+            {
+                // Extract the body content from each page's HOCR
+                var bodyStartIndex = pageHocr.IndexOf("<body>");
+                var bodyEndIndex = pageHocr.IndexOf("</body>");
+                
+                if (bodyStartIndex >= 0 && bodyEndIndex >= 0)
+                {
+                    bodyStartIndex += "<body>".Length;
+                    var bodyFragment = pageHocr.Substring(bodyStartIndex, bodyEndIndex - bodyStartIndex);
+                    bodyContent.AppendLine(bodyFragment);
+                }
+            }
+
+            return xhtmlHeader + bodyContent.ToString() + xhtmlFooter;
         }
 
         /// <summary>
