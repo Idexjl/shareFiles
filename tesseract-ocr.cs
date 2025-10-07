@@ -65,9 +65,9 @@ namespace ImageOCR
                 var textList = new List<string>();
                 using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    for (int i = 0; i < pixArray.Count; i++)
+                    foreach (var pix in pixArray)
                     {
-                        using (var pix = pixArray[i])
+                        using (pix)
                         using (var page = _engine.Process(pix))
                         {
                             textList.Add(page.GetText());
@@ -133,9 +133,9 @@ namespace ImageOCR
                 
                 using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    for (int i = 0; i < pixArray.Count; i++)
+                    foreach (var pix in pixArray)
                     {
-                        using (var pix = pixArray[i])
+                        using (pix)
                         using (var page = _engine.Process(pix))
                         {
                             textList.Add(page.GetText());
@@ -184,17 +184,19 @@ namespace ImageOCR
             }
 
             var pageHocrList = new List<string>();
+            int pageNumber = 0;
 
             if (IsMultiPageTiff(imagePath))
             {
                 using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    for (int i = 0; i < pixArray.Count; i++)
+                    foreach (var pix in pixArray)
                     {
-                        using (var pix = pixArray[i])
+                        using (pix)
                         using (var page = _engine.Process(pix))
                         {
-                            pageHocrList.Add(page.GetHOCRText(i));
+                            pageHocrList.Add(page.GetHOCRText(pageNumber));
+                            pageNumber++;
                         }
                     }
                 }
@@ -255,18 +257,20 @@ namespace ImageOCR
 
             var textList = new List<string>();
             var pageHocrList = new List<string>();
+            int pageNumber = 0;
 
             if (IsMultiPageTiff(imagePath))
             {
                 using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    for (int i = 0; i < pixArray.Count; i++)
+                    foreach (var pix in pixArray)
                     {
-                        using (var pix = pixArray[i])
+                        using (pix)
                         using (var page = _engine.Process(pix))
                         {
                             textList.Add(page.GetText());
-                            pageHocrList.Add(page.GetHOCRText(i));
+                            pageHocrList.Add(page.GetHOCRText(pageNumber));
+                            pageNumber++;
                         }
                     }
                 }
@@ -302,19 +306,21 @@ namespace ImageOCR
             var textList = new List<string>();
             var pageHocrList = new List<string>();
             var confidenceList = new List<float>();
+            int pageNumber = 0;
 
             if (IsMultiPageTiff(imagePath))
             {
                 using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    for (int i = 0; i < pixArray.Count; i++)
+                    foreach (var pix in pixArray)
                     {
-                        using (var pix = pixArray[i])
+                        using (pix)
                         using (var page = _engine.Process(pix))
                         {
                             textList.Add(page.GetText());
-                            pageHocrList.Add(page.GetHOCRText(i));
+                            pageHocrList.Add(page.GetHOCRText(pageNumber));
                             confidenceList.Add(page.GetMeanConfidence() * 100);
+                            pageNumber++;
                         }
                     }
                 }
