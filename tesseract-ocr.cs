@@ -30,10 +30,28 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts text from an image file
+        /// Gets the number of pages in an image file (useful for multi-page TIFFs)
         /// </summary>
         /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Extracted text from the image</returns>
+        /// <returns>Number of pages in the image</returns>
+        public int GetPageCount(string imagePath)
+        {
+            if (!File.Exists(imagePath))
+            {
+                throw new FileNotFoundException($"Image file not found: {imagePath}");
+            }
+
+            using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+            {
+                return pixArray.Count;
+            }
+        }
+
+        /// <summary>
+        /// Extracts text from an image file (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imagePath">Path to the image file</param>
+        /// <returns>Extracted text from all pages</returns>
         public string ExtractTextFromImage(string imagePath)
         {
             if (!File.Exists(imagePath))
@@ -41,8 +59,26 @@ namespace ImageOCR
                 throw new FileNotFoundException($"Image file not found: {imagePath}");
             }
 
-            using (var img = Pix.LoadFromFile(imagePath))
+            // Check if it's a multi-page TIFF
+            if (IsMultiPageTiff(imagePath))
             {
+                var textList = new List<string>();
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                {
+                    for (int i = 0; i < pixArray.Count; i++)
+                    {
+                        using (var pix = pixArray[i])
+                        using (var page = _engine.Process(pix))
+                        {
+                            textList.Add(page.GetText());
+                        }
+                    }
+                }
+                return string.Join("\n\n", textList);
+            }
+            else
+            {
+                using (var img = Pix.LoadFromFile(imagePath))
                 using (var page = _engine.Process(img))
                 {
                     return page.GetText();
@@ -58,11 +94,9 @@ namespace ImageOCR
         public string ExtractTextFromStream(Stream imageStream)
         {
             using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStream)))
+            using (var page = _engine.Process(img))
             {
-                using (var page = _engine.Process(img))
-                {
-                    return page.GetText();
-                }
+                return page.GetText();
             }
         }
 
@@ -74,19 +108,17 @@ namespace ImageOCR
         public string ExtractTextFromBytes(byte[] imageBytes)
         {
             using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
             {
-                using (var page = _engine.Process(img))
-                {
-                    return page.GetText();
-                }
+                return page.GetText();
             }
         }
 
         /// <summary>
-        /// Extracts text with confidence scores
+        /// Extracts text with confidence scores (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Tuple containing the extracted text and mean confidence (0-100)</returns>
+        /// <returns>Tuple containing the extracted text and average confidence (0-100)</returns>
         public (string Text, float Confidence) ExtractTextWithConfidence(string imagePath)
         {
             if (!File.Exists(imagePath))
@@ -94,8 +126,31 @@ namespace ImageOCR
                 throw new FileNotFoundException($"Image file not found: {imagePath}");
             }
 
-            using (var img = Pix.LoadFromFile(imagePath))
+            if (IsMultiPageTiff(imagePath))
             {
+                var textList = new List<string>();
+                var confidenceList = new List<float>();
+                
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                {
+                    for (int i = 0; i < pixArray.Count; i++)
+                    {
+                        using (var pix = pixArray[i])
+                        using (var page = _engine.Process(pix))
+                        {
+                            textList.Add(page.GetText());
+                            confidenceList.Add(page.GetMeanConfidence() * 100);
+                        }
+                    }
+                }
+                
+                string combinedText = string.Join("\n\n", textList);
+                float avgConfidence = confidenceList.Average();
+                return (combinedText, avgConfidence);
+            }
+            else
+            {
+                using (var img = Pix.LoadFromFile(imagePath))
                 using (var page = _engine.Process(img))
                 {
                     string text = page.GetText();
@@ -106,47 +161,7 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from multiple image pages in XHTML format
-        /// </summary>
-        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
-        /// <param name="hocrOutputPath">Path where the HOCR XHTML file will be saved</param>
-        public void ExtractAndSaveHocrXhtml(string[] imagePaths, string hocrOutputPath)
-        {
-            string hocr = ExtractHocrXhtml(imagePaths);
-            File.WriteAllText(hocrOutputPath, hocr);
-        }
-
-        /// <summary>
-        /// Extracts HOCR layout information from multiple image pages in XHTML format
-        /// </summary>
-        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
-        /// <returns>Complete HOCR XHTML document containing all pages</returns>
-        public string ExtractHocrXhtml(string[] imagePaths)
-        {
-            var pageHocrList = new List<string>();
-            
-            for (int i = 0; i < imagePaths.Length; i++)
-            {
-                if (!File.Exists(imagePaths[i]))
-                {
-                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
-                }
-
-                using (var img = Pix.LoadFromFile(imagePaths[i]))
-                {
-                    using (var page = _engine.Process(img))
-                    {
-                        string pageHocr = page.GetHOCRText(i);
-                        pageHocrList.Add(pageHocr);
-                    }
-                }
-            }
-
-            return CombineHocrPagesToXhtml(pageHocrList);
-        }
-
-        /// <summary>
-        /// Extracts HOCR layout information from a single image file and saves it as XHTML
+        /// Extracts HOCR XHTML layout information from an image file (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imagePath">Path to the image file</param>
         /// <param name="hocrOutputPath">Path where the HOCR XHTML file will be saved</param>
@@ -157,10 +172,10 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from a single image file in XHTML format
+        /// Extracts HOCR XHTML layout information from an image file (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imagePath">Path to the image file</param>
-        /// <returns>HOCR XHTML string containing layout information</returns>
+        /// <returns>HOCR XHTML string containing layout information for all pages</returns>
         public string ExtractHocrXhtml(string imagePath)
         {
             if (!File.Exists(imagePath))
@@ -168,34 +183,28 @@ namespace ImageOCR
                 throw new FileNotFoundException($"Image file not found: {imagePath}");
             }
 
-            using (var img = Pix.LoadFromFile(imagePath))
+            var pageHocrList = new List<string>();
+
+            if (IsMultiPageTiff(imagePath))
             {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                {
+                    for (int i = 0; i < pixArray.Count; i++)
+                    {
+                        using (var pix = pixArray[i])
+                        using (var page = _engine.Process(pix))
+                        {
+                            pageHocrList.Add(page.GetHOCRText(i));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                using (var img = Pix.LoadFromFile(imagePath))
                 using (var page = _engine.Process(img))
                 {
-                    string pageHocr = page.GetHOCRText(0);
-                    return CombineHocrPagesToXhtml(new List<string> { pageHocr });
-                }
-            }
-        }
-
-        /// <summary>
-        /// Extracts HOCR layout information from multiple image streams in XHTML format
-        /// </summary>
-        /// <param name="imageStreams">Array of streams containing image data (one per page)</param>
-        /// <returns>Complete HOCR XHTML document containing all pages</returns>
-        public string ExtractHocrXhtmlFromStreams(Stream[] imageStreams)
-        {
-            var pageHocrList = new List<string>();
-            
-            for (int i = 0; i < imageStreams.Length; i++)
-            {
-                using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStreams[i])))
-                {
-                    using (var page = _engine.Process(img))
-                    {
-                        string pageHocr = page.GetHOCRText(i);
-                        pageHocrList.Add(pageHocr);
-                    }
+                    pageHocrList.Add(page.GetHOCRText(0));
                 }
             }
 
@@ -203,53 +212,72 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from multiple byte arrays in XHTML format
+        /// Extracts HOCR layout information from an image stream
         /// </summary>
-        /// <param name="imageByteArrays">Array of byte arrays, each containing image data (one per page)</param>
-        /// <returns>Complete HOCR XHTML document containing all pages</returns>
-        public string ExtractHocrXhtmlFromBytes(byte[][] imageByteArrays)
+        /// <param name="imageStream">Stream containing the image data</param>
+        /// <returns>HOCR XHTML string containing layout information</returns>
+        public string ExtractHocrXhtmlFromStream(Stream imageStream)
         {
-            var pageHocrList = new List<string>();
-            
-            for (int i = 0; i < imageByteArrays.Length; i++)
+            using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStream)))
+            using (var page = _engine.Process(img))
             {
-                using (var img = Pix.LoadFromMemory(imageByteArrays[i]))
-                {
-                    using (var page = _engine.Process(img))
-                    {
-                        string pageHocr = page.GetHOCRText(i);
-                        pageHocrList.Add(pageHocr);
-                    }
-                }
+                var pageHocrList = new List<string> { page.GetHOCRText(0) };
+                return CombineHocrPagesToXhtml(pageHocrList);
             }
-
-            return CombineHocrPagesToXhtml(pageHocrList);
         }
 
         /// <summary>
-        /// Extracts both text and HOCR XHTML layout information from multiple images
+        /// Extracts HOCR layout information from a byte array
         /// </summary>
-        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
-        /// <returns>Tuple containing the combined plain text and HOCR XHTML</returns>
-        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(string[] imagePaths)
+        /// <param name="imageBytes">Byte array of the image</param>
+        /// <returns>HOCR XHTML string containing layout information</returns>
+        public string ExtractHocrXhtmlFromBytes(byte[] imageBytes)
         {
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                var pageHocrList = new List<string> { page.GetHOCRText(0) };
+                return CombineHocrPagesToXhtml(pageHocrList);
+            }
+        }
+
+        /// <summary>
+        /// Extracts both text and HOCR XHTML layout information from an image (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imagePath">Path to the image file</param>
+        /// <returns>Tuple containing the plain text and HOCR XHTML for all pages</returns>
+        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(string imagePath)
+        {
+            if (!File.Exists(imagePath))
+            {
+                throw new FileNotFoundException($"Image file not found: {imagePath}");
+            }
+
             var textList = new List<string>();
             var pageHocrList = new List<string>();
-            
-            for (int i = 0; i < imagePaths.Length; i++)
-            {
-                if (!File.Exists(imagePaths[i]))
-                {
-                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
-                }
 
-                using (var img = Pix.LoadFromFile(imagePaths[i]))
+            if (IsMultiPageTiff(imagePath))
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    using (var page = _engine.Process(img))
+                    for (int i = 0; i < pixArray.Count; i++)
                     {
-                        textList.Add(page.GetText());
-                        pageHocrList.Add(page.GetHOCRText(i));
+                        using (var pix = pixArray[i])
+                        using (var page = _engine.Process(pix))
+                        {
+                            textList.Add(page.GetText());
+                            pageHocrList.Add(page.GetHOCRText(i));
+                        }
                     }
+                }
+            }
+            else
+            {
+                using (var img = Pix.LoadFromFile(imagePath))
+                using (var page = _engine.Process(img))
+                {
+                    textList.Add(page.GetText());
+                    pageHocrList.Add(page.GetHOCRText(0));
                 }
             }
 
@@ -260,31 +288,45 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts text, HOCR XHTML, and confidence from multiple images
+        /// Extracts text, HOCR XHTML, and confidence from an image (handles all pages in multi-page TIFFs)
         /// </summary>
-        /// <param name="imagePaths">Array of paths to image files (one per page)</param>
-        /// <returns>Tuple containing combined text, HOCR XHTML, and average confidence score</returns>
-        public (string Text, string HocrXhtml, float AverageConfidence) ExtractCompleteXhtml(string[] imagePaths)
+        /// <param name="imagePath">Path to the image file</param>
+        /// <returns>Tuple containing text, HOCR XHTML, and average confidence score for all pages</returns>
+        public (string Text, string HocrXhtml, float AverageConfidence) ExtractCompleteXhtml(string imagePath)
         {
+            if (!File.Exists(imagePath))
+            {
+                throw new FileNotFoundException($"Image file not found: {imagePath}");
+            }
+
             var textList = new List<string>();
             var pageHocrList = new List<string>();
             var confidenceList = new List<float>();
-            
-            for (int i = 0; i < imagePaths.Length; i++)
-            {
-                if (!File.Exists(imagePaths[i]))
-                {
-                    throw new FileNotFoundException($"Image file not found: {imagePaths[i]}");
-                }
 
-                using (var img = Pix.LoadFromFile(imagePaths[i]))
+            if (IsMultiPageTiff(imagePath))
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
                 {
-                    using (var page = _engine.Process(img))
+                    for (int i = 0; i < pixArray.Count; i++)
                     {
-                        textList.Add(page.GetText());
-                        pageHocrList.Add(page.GetHOCRText(i));
-                        confidenceList.Add(page.GetMeanConfidence() * 100);
+                        using (var pix = pixArray[i])
+                        using (var page = _engine.Process(pix))
+                        {
+                            textList.Add(page.GetText());
+                            pageHocrList.Add(page.GetHOCRText(i));
+                            confidenceList.Add(page.GetMeanConfidence() * 100);
+                        }
                     }
+                }
+            }
+            else
+            {
+                using (var img = Pix.LoadFromFile(imagePath))
+                using (var page = _engine.Process(img))
+                {
+                    textList.Add(page.GetText());
+                    pageHocrList.Add(page.GetHOCRText(0));
+                    confidenceList.Add(page.GetMeanConfidence() * 100);
                 }
             }
 
@@ -293,6 +335,24 @@ namespace ImageOCR
             float avgConfidence = confidenceList.Average();
             
             return (combinedText, hocrXhtml, avgConfidence);
+        }
+
+        /// <summary>
+        /// Checks if an image file is a multi-page TIFF
+        /// </summary>
+        private bool IsMultiPageTiff(string imagePath)
+        {
+            try
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                {
+                    return pixArray.Count > 1;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
