@@ -7,7 +7,7 @@ using Tesseract;
 namespace ImageOCR
 {
     /// <summary>
-    /// Provides OCR functionality using Tesseract engine with HOCR layout support
+    /// Provides stream-based OCR functionality using Tesseract engine with HOCR layout support
     /// </summary>
     public class TesseractOcrService : IDisposable
     {
@@ -30,70 +30,64 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Gets the number of pages in an image file (useful for multi-page TIFFs)
-        /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Number of pages in the image</returns>
-        public int GetPageCount(string imagePath)
-        {
-            if (!File.Exists(imagePath))
-            {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
-            using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
-            {
-                return pixArray.Count;
-            }
-        }
-
-        /// <summary>
-        /// Extracts text from an image file (handles all pages in multi-page TIFFs)
-        /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <returns>Extracted text from all pages</returns>
-        public string ExtractTextFromImage(string imagePath)
-        {
-            if (!File.Exists(imagePath))
-            {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
-            // Check if it's a multi-page TIFF
-            if (IsMultiPageTiff(imagePath))
-            {
-                var textList = new List<string>();
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
-                {
-                    foreach (var pix in pixArray)
-                    {
-                        using (pix)
-                        using (var page = _engine.Process(pix))
-                        {
-                            textList.Add(page.GetText());
-                        }
-                    }
-                }
-                return string.Join("\n\n", textList);
-            }
-            else
-            {
-                using (var img = Pix.LoadFromFile(imagePath))
-                using (var page = _engine.Process(img))
-                {
-                    return page.GetText();
-                }
-            }
-        }
-
-        /// <summary>
-        /// Extracts text from an image stream
+        /// Gets the number of pages in an image stream (useful for multi-page TIFFs)
         /// </summary>
         /// <param name="imageStream">Stream containing the image data</param>
-        /// <returns>Extracted text from the image</returns>
-        public string ExtractTextFromStream(Stream imageStream)
+        /// <returns>Number of pages in the image</returns>
+        public int GetPageCount(Stream imageStream)
         {
-            using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStream)))
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            
+            try
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
+                {
+                    return pixArray.Count;
+                }
+            }
+            catch
+            {
+                // Not a multi-page TIFF or error loading
+                return 1;
+            }
+        }
+
+        /// <summary>
+        /// Extracts text from an image stream (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageStream">Stream containing the image data</param>
+        /// <returns>Extracted text from all pages</returns>
+        public string ExtractText(Stream imageStream)
+        {
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            
+            // Try to load as multi-page TIFF first
+            try
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
+                {
+                    if (pixArray.Count > 1)
+                    {
+                        var textList = new List<string>();
+                        foreach (var pix in pixArray)
+                        {
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                            }
+                        }
+                        return string.Join("\n\n", textList);
+                    }
+                }
+            }
+            catch
+            {
+                // Not a multi-page TIFF, fall through to single page processing
+            }
+
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
             using (var page = _engine.Process(img))
             {
                 return page.GetText();
@@ -101,12 +95,38 @@ namespace ImageOCR
         }
 
         /// <summary>
-        /// Extracts text from a byte array containing image data
+        /// Extracts text from a byte array containing image data (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imageBytes">Byte array of the image</param>
-        /// <returns>Extracted text from the image</returns>
-        public string ExtractTextFromBytes(byte[] imageBytes)
+        /// <returns>Extracted text from all pages</returns>
+        public string ExtractText(byte[] imageBytes)
         {
+            // Try to load as multi-page TIFF first
+            try
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
+                {
+                    if (pixArray.Count > 1)
+                    {
+                        var textList = new List<string>();
+                        foreach (var pix in pixArray)
+                        {
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                            }
+                        }
+                        return string.Join("\n\n", textList);
+                    }
+                }
+            }
+            catch
+            {
+                // Not a multi-page TIFF, fall through to single page processing
+            }
+
+            // Single page image
             using (var img = Pix.LoadFromMemory(imageBytes))
             using (var page = _engine.Process(img))
             {
@@ -117,248 +137,302 @@ namespace ImageOCR
         /// <summary>
         /// Extracts text with confidence scores (handles all pages in multi-page TIFFs)
         /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
+        /// <param name="imageStream">Stream containing the image data</param>
         /// <returns>Tuple containing the extracted text and average confidence (0-100)</returns>
-        public (string Text, float Confidence) ExtractTextWithConfidence(string imagePath)
+        public (string Text, float Confidence) ExtractTextWithConfidence(Stream imageStream)
         {
-            if (!File.Exists(imagePath))
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            
+            // Try to load as multi-page TIFF first
+            try
             {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
-            if (IsMultiPageTiff(imagePath))
-            {
-                var textList = new List<string>();
-                var confidenceList = new List<float>();
-                
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
                 {
-                    foreach (var pix in pixArray)
+                    if (pixArray.Count > 1)
                     {
-                        using (pix)
-                        using (var page = _engine.Process(pix))
+                        var textList = new List<string>();
+                        var confidenceList = new List<float>();
+                        
+                        foreach (var pix in pixArray)
                         {
-                            textList.Add(page.GetText());
-                            confidenceList.Add(page.GetMeanConfidence() * 100);
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                                confidenceList.Add(page.GetMeanConfidence() * 100);
+                            }
                         }
+                        
+                        string combinedText = string.Join("\n\n", textList);
+                        float avgConfidence = confidenceList.Average();
+                        return (combinedText, avgConfidence);
                     }
                 }
-                
-                string combinedText = string.Join("\n\n", textList);
-                float avgConfidence = confidenceList.Average();
-                return (combinedText, avgConfidence);
             }
-            else
+            catch
             {
-                using (var img = Pix.LoadFromFile(imagePath))
-                using (var page = _engine.Process(img))
+                // Not a multi-page TIFF, fall through to single page processing
+            }
+
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                string text = page.GetText();
+                float confidence = page.GetMeanConfidence() * 100;
+                return (text, confidence);
+            }
+        }
+
+        /// <summary>
+        /// Extracts text with confidence scores from byte array (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageBytes">Byte array of the image</param>
+        /// <returns>Tuple containing the extracted text and average confidence (0-100)</returns>
+        public (string Text, float Confidence) ExtractTextWithConfidence(byte[] imageBytes)
+        {
+            // Try to load as multi-page TIFF first
+            try
+            {
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
                 {
-                    string text = page.GetText();
-                    float confidence = page.GetMeanConfidence() * 100;
-                    return (text, confidence);
+                    if (pixArray.Count > 1)
+                    {
+                        var textList = new List<string>();
+                        var confidenceList = new List<float>();
+                        
+                        foreach (var pix in pixArray)
+                        {
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                                confidenceList.Add(page.GetMeanConfidence() * 100);
+                            }
+                        }
+                        
+                        string combinedText = string.Join("\n\n", textList);
+                        float avgConfidence = confidenceList.Average();
+                        return (combinedText, avgConfidence);
+                    }
                 }
             }
-        }
-
-        /// <summary>
-        /// Extracts HOCR XHTML layout information from an image file (handles all pages in multi-page TIFFs)
-        /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <param name="hocrOutputPath">Path where the HOCR XHTML file will be saved</param>
-        public void ExtractAndSaveHocrXhtml(string imagePath, string hocrOutputPath)
-        {
-            string hocr = ExtractHocrXhtml(imagePath);
-            File.WriteAllText(hocrOutputPath, hocr);
-        }
-
-        /// <summary>
-        /// Extracts HOCR XHTML layout information from an image file (handles all pages in multi-page TIFFs)
-        /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
-        /// <returns>HOCR XHTML string containing layout information for all pages</returns>
-        public string ExtractHocrXhtml(string imagePath)
-        {
-            if (!File.Exists(imagePath))
+            catch
             {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
+                // Not a multi-page TIFF, fall through to single page processing
             }
 
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                string text = page.GetText();
+                float confidence = page.GetMeanConfidence() * 100;
+                return (text, confidence);
+            }
+        }
+
+        /// <summary>
+        /// Extracts HOCR XHTML layout information from an image stream (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageStream">Stream containing the image data</param>
+        /// <returns>HOCR XHTML string containing layout information for all pages</returns>
+        public string ExtractHocrXhtml(Stream imageStream)
+        {
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            return ExtractHocrXhtml(imageBytes);
+        }
+
+        /// <summary>
+        /// Extracts HOCR XHTML layout information from a byte array (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageBytes">Byte array of the image</param>
+        /// <returns>HOCR XHTML string containing layout information for all pages</returns>
+        public string ExtractHocrXhtml(byte[] imageBytes)
+        {
             var pageHocrList = new List<string>();
             int pageNumber = 0;
 
-            if (IsMultiPageTiff(imagePath))
+            // Try to load as multi-page TIFF first
+            try
             {
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
                 {
-                    foreach (var pix in pixArray)
+                    if (pixArray.Count > 1)
                     {
-                        using (pix)
-                        using (var page = _engine.Process(pix))
+                        foreach (var pix in pixArray)
                         {
-                            pageHocrList.Add(page.GetHOCRText(pageNumber));
-                            pageNumber++;
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                pageHocrList.Add(page.GetHOCRText(pageNumber));
+                                pageNumber++;
+                            }
                         }
+                        return CombineHocrPagesToXhtml(pageHocrList);
                     }
                 }
             }
-            else
+            catch
             {
-                using (var img = Pix.LoadFromFile(imagePath))
-                using (var page = _engine.Process(img))
-                {
-                    pageHocrList.Add(page.GetHOCRText(0));
-                }
+                // Not a multi-page TIFF, fall through to single page processing
+            }
+
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                pageHocrList.Add(page.GetHOCRText(0));
             }
 
             return CombineHocrPagesToXhtml(pageHocrList);
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from an image stream
+        /// Writes HOCR XHTML to an output stream (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imageStream">Stream containing the image data</param>
-        /// <returns>HOCR XHTML string containing layout information</returns>
-        public string ExtractHocrXhtmlFromStream(Stream imageStream)
+        /// <param name="outputStream">Stream to write the HOCR XHTML to</param>
+        public void ExtractHocrXhtmlToStream(Stream imageStream, Stream outputStream)
         {
-            using (var img = Pix.LoadFromMemory(StreamToByteArray(imageStream)))
-            using (var page = _engine.Process(img))
+            string hocr = ExtractHocrXhtml(imageStream);
+            using (var writer = new StreamWriter(outputStream, leaveOpen: true))
             {
-                var pageHocrList = new List<string> { page.GetHOCRText(0) };
-                return CombineHocrPagesToXhtml(pageHocrList);
+                writer.Write(hocr);
             }
         }
 
         /// <summary>
-        /// Extracts HOCR layout information from a byte array
+        /// Extracts both text and HOCR XHTML layout information from a stream (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageStream">Stream containing the image data</param>
+        /// <returns>Tuple containing the plain text and HOCR XHTML for all pages</returns>
+        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(Stream imageStream)
+        {
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            return ExtractTextAndHocrXhtml(imageBytes);
+        }
+
+        /// <summary>
+        /// Extracts both text and HOCR XHTML layout information from a byte array (handles all pages in multi-page TIFFs)
         /// </summary>
         /// <param name="imageBytes">Byte array of the image</param>
-        /// <returns>HOCR XHTML string containing layout information</returns>
-        public string ExtractHocrXhtmlFromBytes(byte[] imageBytes)
-        {
-            using (var img = Pix.LoadFromMemory(imageBytes))
-            using (var page = _engine.Process(img))
-            {
-                var pageHocrList = new List<string> { page.GetHOCRText(0) };
-                return CombineHocrPagesToXhtml(pageHocrList);
-            }
-        }
-
-        /// <summary>
-        /// Extracts both text and HOCR XHTML layout information from an image (handles all pages in multi-page TIFFs)
-        /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
         /// <returns>Tuple containing the plain text and HOCR XHTML for all pages</returns>
-        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(string imagePath)
+        public (string Text, string HocrXhtml) ExtractTextAndHocrXhtml(byte[] imageBytes)
         {
-            if (!File.Exists(imagePath))
-            {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
-
             var textList = new List<string>();
             var pageHocrList = new List<string>();
             int pageNumber = 0;
 
-            if (IsMultiPageTiff(imagePath))
+            // Try to load as multi-page TIFF first
+            try
             {
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
                 {
-                    foreach (var pix in pixArray)
+                    if (pixArray.Count > 1)
                     {
-                        using (pix)
-                        using (var page = _engine.Process(pix))
+                        foreach (var pix in pixArray)
                         {
-                            textList.Add(page.GetText());
-                            pageHocrList.Add(page.GetHOCRText(pageNumber));
-                            pageNumber++;
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                                pageHocrList.Add(page.GetHOCRText(pageNumber));
+                                pageNumber++;
+                            }
                         }
+                        
+                        string combinedText = string.Join("\n\n", textList);
+                        string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
+                        return (combinedText, hocrXhtml);
                     }
                 }
             }
-            else
+            catch
             {
-                using (var img = Pix.LoadFromFile(imagePath))
-                using (var page = _engine.Process(img))
-                {
-                    textList.Add(page.GetText());
-                    pageHocrList.Add(page.GetHOCRText(0));
-                }
+                // Not a multi-page TIFF, fall through to single page processing
             }
 
-            string combinedText = string.Join("\n\n", textList);
-            string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
-            
-            return (combinedText, hocrXhtml);
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                textList.Add(page.GetText());
+                pageHocrList.Add(page.GetHOCRText(0));
+            }
+
+            string text = string.Join("\n\n", textList);
+            string hocr = CombineHocrPagesToXhtml(pageHocrList);
+            return (text, hocr);
         }
 
         /// <summary>
-        /// Extracts text, HOCR XHTML, and confidence from an image (handles all pages in multi-page TIFFs)
+        /// Extracts text, HOCR XHTML, and confidence from a stream (handles all pages in multi-page TIFFs)
         /// </summary>
-        /// <param name="imagePath">Path to the image file</param>
+        /// <param name="imageStream">Stream containing the image data</param>
         /// <returns>Tuple containing text, HOCR XHTML, and average confidence score for all pages</returns>
-        public (string Text, string HocrXhtml, float AverageConfidence) ExtractCompleteXhtml(string imagePath)
+        public (string Text, string HocrXhtml, float AverageConfidence) ExtractComplete(Stream imageStream)
         {
-            if (!File.Exists(imagePath))
-            {
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-            }
+            byte[] imageBytes = StreamToByteArray(imageStream);
+            return ExtractComplete(imageBytes);
+        }
 
+        /// <summary>
+        /// Extracts text, HOCR XHTML, and confidence from a byte array (handles all pages in multi-page TIFFs)
+        /// </summary>
+        /// <param name="imageBytes">Byte array of the image</param>
+        /// <returns>Tuple containing text, HOCR XHTML, and average confidence score for all pages</returns>
+        public (string Text, string HocrXhtml, float AverageConfidence) ExtractComplete(byte[] imageBytes)
+        {
             var textList = new List<string>();
             var pageHocrList = new List<string>();
             var confidenceList = new List<float>();
             int pageNumber = 0;
 
-            if (IsMultiPageTiff(imagePath))
-            {
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
-                {
-                    foreach (var pix in pixArray)
-                    {
-                        using (pix)
-                        using (var page = _engine.Process(pix))
-                        {
-                            textList.Add(page.GetText());
-                            pageHocrList.Add(page.GetHOCRText(pageNumber));
-                            confidenceList.Add(page.GetMeanConfidence() * 100);
-                            pageNumber++;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                using (var img = Pix.LoadFromFile(imagePath))
-                using (var page = _engine.Process(img))
-                {
-                    textList.Add(page.GetText());
-                    pageHocrList.Add(page.GetHOCRText(0));
-                    confidenceList.Add(page.GetMeanConfidence() * 100);
-                }
-            }
-
-            string combinedText = string.Join("\n\n", textList);
-            string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
-            float avgConfidence = confidenceList.Average();
-            
-            return (combinedText, hocrXhtml, avgConfidence);
-        }
-
-        /// <summary>
-        /// Checks if an image file is a multi-page TIFF
-        /// </summary>
-        private bool IsMultiPageTiff(string imagePath)
-        {
+            // Try to load as multi-page TIFF first
             try
             {
-                using (var pixArray = PixArray.LoadMultiPageTiffFromFile(imagePath))
+                using (var pixArray = PixArray.LoadMultiPageTiffFromMemory(imageBytes))
                 {
-                    return pixArray.Count > 1;
+                    if (pixArray.Count > 1)
+                    {
+                        foreach (var pix in pixArray)
+                        {
+                            using (pix)
+                            using (var page = _engine.Process(pix))
+                            {
+                                textList.Add(page.GetText());
+                                pageHocrList.Add(page.GetHOCRText(pageNumber));
+                                confidenceList.Add(page.GetMeanConfidence() * 100);
+                                pageNumber++;
+                            }
+                        }
+                        
+                        string combinedText = string.Join("\n\n", textList);
+                        string hocrXhtml = CombineHocrPagesToXhtml(pageHocrList);
+                        float avgConfidence = confidenceList.Average();
+                        return (combinedText, hocrXhtml, avgConfidence);
+                    }
                 }
             }
             catch
             {
-                return false;
+                // Not a multi-page TIFF, fall through to single page processing
             }
+
+            // Single page image
+            using (var img = Pix.LoadFromMemory(imageBytes))
+            using (var page = _engine.Process(img))
+            {
+                textList.Add(page.GetText());
+                pageHocrList.Add(page.GetHOCRText(0));
+                confidenceList.Add(page.GetMeanConfidence() * 100);
+            }
+
+            string text = string.Join("\n\n", textList);
+            string hocr = CombineHocrPagesToXhtml(pageHocrList);
+            float confidence = confidenceList.Average();
+            return (text, hocr, confidence);
         }
 
         /// <summary>
