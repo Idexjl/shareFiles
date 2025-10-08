@@ -82,8 +82,13 @@ namespace ImageOCR
                     foreach (var word in words)
                     {
                         var wordInfo = ParseTitle(word.Attribute("title")?.Value ?? "");
-                        var wordId = $"word-{blockIdCounter++}";
                         var wordText = GetElementText(word);
+                        
+                        // Skip empty words
+                        if (string.IsNullOrWhiteSpace(wordText))
+                            continue;
+
+                        var wordId = $"word-{blockIdCounter++}";
 
                         // Extract confidence if available
                         float confidence = 0;
@@ -210,10 +215,21 @@ namespace ImageOCR
         /// </summary>
         private string GetElementText(XElement element)
         {
-            return string.Join(" ", element.Descendants()
-                .Where(e => !e.HasElements)
-                .Select(e => e.Value.Trim())
-                .Where(v => !string.IsNullOrWhiteSpace(v)));
+            // Get direct text content or text from child text nodes
+            var textContent = element.Nodes()
+                .OfType<XText>()
+                .Select(t => t.Value.Trim())
+                .Where(v => !string.IsNullOrWhiteSpace(v));
+            
+            var result = string.Join(" ", textContent);
+            
+            // If no direct text, try to get from value
+            if (string.IsNullOrWhiteSpace(result))
+            {
+                result = element.Value.Trim();
+            }
+            
+            return result;
         }
     }
 
